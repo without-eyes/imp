@@ -11,8 +11,6 @@ build/
 *.out
 
 *.log
-core
-core.*
 vgcore.*
 
 callgrind.out.*
