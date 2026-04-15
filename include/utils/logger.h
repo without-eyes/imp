@@ -1,8 +1,6 @@
 #ifndef LOGGER_H
 #define LOGGER_H
 
-#include <stdbool.h>
-
 #define LOG_FILE_PATH "/var/log/imp/imp.log"
 #define LOG_BUFF_SIZE 1024
 
@@ -22,12 +20,6 @@ typedef enum {
     LOG_LEVEL_INFO,
     LOG_LEVEL_DEBUG
 } log_level_t;
-
-typedef struct {
-    bool isInitialized;
-    log_level_t level;
-} LoggerConfig;
-
 
 int log_init(log_level_t level);
 int log_deinit(void);

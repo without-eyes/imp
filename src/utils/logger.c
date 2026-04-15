@@ -1,11 +1,19 @@
 #include "../../include/utils/logger.h"
 
 #include <stdio.h>
+#include <stdbool.h>
 #include <stdarg.h>
 #include <time.h>
 
+typedef struct {
+    FILE* fd;
+    bool isInitialized;
+    log_level_t level;
+} LoggerConfig;
+
 static LoggerConfig* log_get_config(void) {
     static LoggerConfig config = {
+        .fd = NULL,
         .isInitialized = false,
         .level = LOG_LEVEL_UNINITIALIZED
     };
@@ -13,23 +21,33 @@ static LoggerConfig* log_get_config(void) {
 }
 
 int log_init(log_level_t level) {
-    FILE* fd = fopen(LOG_FILE_PATH, "a");
-    
-    if (fd == NULL) {
+    LoggerConfig* config = log_get_config();
+
+    if (config->isInitialized) {
+        return 0;
+    }
+
+    config->fd = fopen(LOG_FILE_PATH, "a");
+    if (config->fd == NULL) {
         return -1;
     }
 
-    LoggerConfig* config = log_get_config();
     config->isInitialized = true;
     config->level = level;
 
-    fclose(fd);
     return 0;
 }
 
 int log_deinit(void) {
     LoggerConfig* config = log_get_config();
     config->isInitialized = false;
+    config->level = LOG_LEVEL_UNINITIALIZED;
+
+    if (config->fd != NULL) {
+        fclose(config->fd);
+        config->fd = NULL;
+    }
+
     return 0;
 }
 
@@ -53,13 +71,8 @@ static void log_get_curr_time(char* buffer, size_t size) {
 
 int log_write(log_level_t level, const char* moduleName, const char* file, int line, const char* format, ...) {
     LoggerConfig* config = log_get_config();
-    if (config->isInitialized == false || config->level < level) {
+    if (config->isInitialized == false || config->level < level || config->fd == NULL) {
         return 0;
-    }
-    
-    FILE* fd = fopen(LOG_FILE_PATH, "a");
-    if (fd == NULL) {
-        return -1;
     }
 
     char buffer[LOG_BUFF_SIZE];
@@ -69,7 +82,6 @@ int log_write(log_level_t level, const char* moduleName, const char* file, int l
     int prefix_len = snprintf(buffer, LOG_BUFF_SIZE, "[%s][%s][%s:%d][%s] ", time_str, moduleName, file, line, log_level_to_string(level));
 
     if (prefix_len < 0 || prefix_len >= LOG_BUFF_SIZE) {
-        fclose(fd);
         return -1;
     }
 
@@ -89,8 +101,8 @@ int log_write(log_level_t level, const char* moduleName, const char* file, int l
     buffer[total_len] = '\n';
     buffer[total_len + 1] = '\0';
 
-    fputs(buffer, fd);
+    fputs(buffer, config->fd);
+    fflush(config->fd);
     
-    fclose(fd);
     return 0;
 }
