@@ -1,4 +1,4 @@
-#include "../../include/utils/logger.h"
+#include "utils/logger.h"
 
 #include <stdio.h>
 #include <stdbool.h>

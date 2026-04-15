@@ -56,7 +56,7 @@
 #pragma GCC visibility pop
 #endif
 
-#include "../../include/utils/cJSON.h"
+#include "utils/cJSON.h"
 
 /* define our own boolean type */
 #ifdef true
