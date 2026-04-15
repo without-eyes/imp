@@ -2,6 +2,10 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <unistd.h>
+#include <dlfcn.h>
+#include <sys/types.h>
+#include "core/imp_module.h"
 #include "utils/logger.h"
 #include "utils/cJSON.h"
 
@@ -36,11 +40,45 @@ static int parse_and_load_modules(const char* jsonString) {
         cJSON *moduleConfig = cJSON_GetObjectItem(moduleItem, "config");
 
         if (cJSON_IsTrue(enabled)) {
-            LOG_INFO("Core", "Module [%s] is ENABLED. Path: %s", name->valuestring, soPath->valuestring);
-            
+            LOG_INFO("Core", "Starting module [%s]...", name->valuestring);
             char *config_str = cJSON_PrintUnformatted(moduleConfig);
             
-            // TODO module fork and start
+            pid_t pid = fork();
+            if (pid < 0) {
+                LOG_ERR("Core", "Fork failed for module [%s]", name->valuestring);
+            } else if (pid == 0) {
+                void* handle = dlopen(soPath->valuestring, RTLD_NOW);
+                if (!handle) {
+                    LOG_ERR("Core", "Failed to load %s: %s", soPath->valuestring, dlerror());
+                    free(config_str);
+                    exit(1);
+                }
+
+                ImpModule* module = (ImpModule*)dlsym(handle, IMP_MODULE_SYM);
+                if (module == NULL) {
+                    LOG_ERR("Core", "Symbol %s not found in %s", IMP_MODULE_SYM, soPath->valuestring);
+                    dlclose(handle);
+                    free(config_str);
+                    exit(1);
+                }
+
+                LOG_INFO("Core", "Loaded [%s] successfully (v%s). Initializing...", module->name, module->version);
+
+                if (module->init(config_str) == 0) {
+                    module->run();
+                } else {
+                    LOG_ERR("Core", "Initialization [%s] failed!", module->name);
+                }
+
+                module->cleanup();
+                dlclose(handle);
+                free(config_str);
+                
+                exit(0); 
+            }
+            else {
+                LOG_INFO("Core", "Module [%s] forked with PID: %d", name->valuestring, pid);
+            }
             
             free(config_str);
         } else {
