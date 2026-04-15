@@ -1,6 +1,6 @@
 CC = gcc
 CFLAGS = -Wall -Wextra -Wpedantic -Werror -g -Iinclude
-LDFLAGS = -ldl
+LDFLAGS = -ldl -rdynamic
 MOD_CFLAGS = -fPIC -shared
 
 BUILD_DIR = build
@@ -25,7 +25,8 @@ $(BUILD_DIR)/obj/%.o: $(SRC_DIR)/%.c
 $(CORE_BIN): $(CORE_OBJS)
 	$(CC) $(CORE_OBJS) -o $@ $(LDFLAGS)
 
-$(BUILD_DIR)/modules/imp_%.so: $(MOD_DIR)/%/src/%.c
+$(BUILD_DIR)/modules/imp_%.so: $(MOD_DIR)/%.c
+	@mkdir -p $(dir $@) 
 	$(CC) $(CFLAGS) $(MOD_CFLAGS) $< -o $@
 
 clean:
