@@ -91,7 +91,7 @@ static int parse_and_load_modules(const char* jsonString) {
 }
 
 int imp_run() {
-    log_init(LOG_LEVEL_DEBUG);
+    log_init(LOG_FILE_PATH, LOG_LEVEL_DEBUG);
 
     char jsonString[CONFIG_MAX_SIZE];
     if (read_config(jsonString, sizeof(jsonString)) != 0) {

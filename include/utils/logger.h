@@ -21,7 +21,7 @@ typedef enum {
     LOG_LEVEL_DEBUG
 } log_level_t;
 
-int log_init(log_level_t level);
+int log_init(const char* logFilePath, log_level_t level);
 int log_deinit(void);
 
 __attribute__((format(printf, 5, 6)))

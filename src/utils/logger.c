@@ -3,7 +3,11 @@
 #include <stdio.h>
 #include <stdbool.h>
 #include <stdarg.h>
+#include <unistd.h>
 #include <time.h>
+#include <sys/time.h>
+
+#define TIME_STR_SIZE 32
 
 typedef struct {
     FILE* fd;
@@ -20,20 +24,22 @@ static LoggerConfig* log_get_config(void) {
     return &config;
 }
 
-int log_init(log_level_t level) {
+int log_init(const char* logFilePath, log_level_t level) {
     LoggerConfig* config = log_get_config();
 
     if (config->isInitialized) {
         return 0;
     }
 
-    config->fd = fopen(LOG_FILE_PATH, "a");
+    config->fd = fopen(logFilePath, "a");
     if (config->fd == NULL) {
         return -1;
     }
 
     config->isInitialized = true;
     config->level = level;
+
+    setvbuf(config->fd, NULL, _IOLBF, 0);
 
     return 0;
 }
@@ -64,9 +70,16 @@ static const char* log_level_to_string(log_level_t level) {
 }
 
 static void log_get_curr_time(char* buffer, size_t size) {
-    time_t currentTime = time(NULL);
-    struct tm *sTm = localtime(&currentTime);
-    strftime(buffer, size, "%Y-%m-%d %H:%M:%S", sTm);
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+
+    struct tm sTm;
+    localtime_r(&tv.tv_sec, &sTm);
+
+    char time_str[TIME_STR_SIZE];
+    strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M:%S", &sTm);
+
+    snprintf(buffer, size, "%s.%03ld", time_str, tv.tv_usec / 1000);
 }
 
 int log_write(log_level_t level, const char* moduleName, const char* file, int line, const char* format, ...) {
@@ -76,10 +89,10 @@ int log_write(log_level_t level, const char* moduleName, const char* file, int l
     }
 
     char buffer[LOG_BUFF_SIZE];
-    char time_str[24];
+    char time_str[TIME_STR_SIZE];
     log_get_curr_time(time_str, sizeof(time_str));
 
-    int prefix_len = snprintf(buffer, LOG_BUFF_SIZE, "[%s][%s][%s:%d][%s] ", time_str, moduleName, file, line, log_level_to_string(level));
+    int prefix_len = snprintf(buffer, LOG_BUFF_SIZE, "[%s][PID:%d][%s][%s:%d][%s] ", time_str, getpid(), moduleName, file, line, log_level_to_string(level));
 
     if (prefix_len < 0 || prefix_len >= LOG_BUFF_SIZE) {
         return -1;
@@ -92,6 +105,9 @@ int log_write(log_level_t level, const char* moduleName, const char* file, int l
     int msg_len = vsnprintf(buffer + prefix_len, msg_space, format, args);
     
     va_end(args);
+    if (msg_len < 0) {
+        msg_len = 0;
+    }
 
     int total_len = prefix_len + msg_len;
     if (total_len > LOG_BUFF_SIZE - 2) {
@@ -102,7 +118,6 @@ int log_write(log_level_t level, const char* moduleName, const char* file, int l
     buffer[total_len + 1] = '\0';
 
     fputs(buffer, config->fd);
-    fflush(config->fd);
     
     return 0;
 }
