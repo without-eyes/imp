@@ -10,8 +10,14 @@
 #include <errno.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <pthread.h>
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <sys/select.h>
+
 #include "core/imp_module.h"
 #include "utils/logger.h"
+#include "utils/ipc.h"
 #include "utils/cJSON.h"
 
 #define MAX_MODULES 16
@@ -30,6 +36,7 @@ typedef struct {
 static ModuleRecord registry[MAX_MODULES];
 static int moduleCount = 0;
 volatile sig_atomic_t daemonActive = 1;
+static pthread_t broker_thread;
 
 void handle_shutdown(int sig) {
     (void)sig;
@@ -135,6 +142,62 @@ static int parse_and_load_modules(const char* jsonString) {
     return 0;
 }
 
+static void* ipc_broker_loop(void* arg) {
+    (void)arg;
+
+    int server_sock = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (server_sock < 0) {
+        LOG_ERR("Broker", "Failed to create IPC socket.");
+        return NULL;
+    }
+
+    unlink(IMP_SOCKET_PATH);
+
+    struct sockaddr_un addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sun_family = AF_UNIX;
+    strncpy(addr.sun_path, IMP_SOCKET_PATH, sizeof(addr.sun_path) - 1);
+
+    if (bind(server_sock, (struct sockaddr*)&addr, sizeof(addr)) == -1) {
+        LOG_ERR("Broker", "Failed to bind IPC socket.");
+        close(server_sock);
+        return NULL;
+    }
+    
+    listen(server_sock, 10);
+    LOG_INFO("Broker", "IPC Message Bus active on %s", IMP_SOCKET_PATH);
+
+    while (daemonActive) {
+        fd_set readfds;
+        FD_ZERO(&readfds);
+        FD_SET(server_sock, &readfds);
+
+        struct timeval tv = {1, 0};
+
+        int activity = select(server_sock + 1, &readfds, NULL, NULL, &tv);
+        
+        if (activity > 0 && FD_ISSET(server_sock, &readfds)) {
+            int client_sock = accept(server_sock, NULL, NULL);
+            if (client_sock >= 0) {
+                char buffer[1024] = {0};
+                ssize_t bytes_read = read(client_sock, buffer, sizeof(buffer) - 1);
+                
+                if (bytes_read > 0) {
+                    buffer[bytes_read] = '\0';
+                    // TODO: Send data to Interface module
+                    LOG_NOTICE("Broker", "Received Event: %s", buffer);
+                }
+                close(client_sock);
+            }
+        }
+    }
+
+    close(server_sock);
+    unlink(IMP_SOCKET_PATH);
+    LOG_INFO("Broker", "IPC Message Bus shut down.");
+    return NULL;
+}
+
 static void supervisor_loop() {
     LOG_INFO("Core", "Entering Supervisor mode. Monitoring %d modules...", moduleCount);
 
@@ -185,6 +248,11 @@ int imp_run() {
         return -1;
     }
 
+    if (pthread_create(&broker_thread, NULL, ipc_broker_loop, NULL) != 0) {
+        LOG_ERR("Core", "Failed to start IPC Broker thread.");
+        return -1;
+    }
+
     supervisor_loop();
 
     return 0;
@@ -192,6 +260,8 @@ int imp_run() {
 
 int imp_cleanup() {
     LOG_INFO("Core", "Initiating shutdown. Cleaning up...");
+
+    pthread_join(broker_thread, NULL);
 
     for (int i = 0; i < moduleCount; i++) {
         if (registry[i].enabled && registry[i].pid > 0) {
