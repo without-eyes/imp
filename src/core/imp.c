@@ -8,9 +8,11 @@
 #include <dlfcn.h>
 #include <signal.h>
 #include <errno.h>
+#include <pthread.h>
+#include <fcntl.h>
 #include <sys/types.h>
 #include <sys/wait.h>
-#include <pthread.h>
+#include <sys/stat.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <sys/select.h>
@@ -233,6 +235,44 @@ static void supervisor_loop() {
                 break;
             }
         }
+    }
+}
+
+void imp_daemonize(void) {
+    pid_t pid;
+
+    pid = fork();
+    if (pid < 0) {
+        exit(EXIT_FAILURE);
+    } else if (pid > 0) {
+        exit(EXIT_SUCCESS);
+    }
+
+    if (setsid() < 0) {
+        exit(EXIT_FAILURE);
+    }
+
+    signal(SIGHUP, SIG_IGN);
+
+    pid = fork();
+    if (pid < 0) {
+        exit(EXIT_FAILURE);
+    } else if (pid > 0) {
+        exit(EXIT_SUCCESS); 
+    }
+
+    umask(0);
+
+    if (chdir("/") < 0) {
+        exit(EXIT_FAILURE);
+    }
+
+    int fd = open("/dev/null", O_RDWR);
+    if (fd >= 0) {
+        dup2(fd, STDIN_FILENO);
+        dup2(fd, STDOUT_FILENO);
+        dup2(fd, STDERR_FILENO);
+        close(fd);
     }
 }
 

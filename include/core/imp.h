@@ -4,8 +4,10 @@
 #define CONFIG_PATH "config/default.conf"
 #define CONFIG_MAX_SIZE 2048
 
-int imp_run();
+void imp_daemonize(void);
 
-int imp_cleanup();
+int imp_run(void);
+
+int imp_cleanup(void);
 
 #endif // IMP_H
