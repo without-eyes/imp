@@ -59,6 +59,9 @@ static void spawn_module(int index, bool isRestart) {
     } 
     
     if (pid == 0) {
+        signal(SIGINT, SIG_DFL);
+        signal(SIGTERM, SIG_DFL);
+
         if (isRestart) {
             sleep(RESTART_DELAY_SEC);
         }
