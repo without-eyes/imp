@@ -11,12 +11,12 @@ CORE_SRCS = $(shell find $(SRC_DIR) -type f -name '*.c')
 CORE_OBJS = $(patsubst $(SRC_DIR)/%.c, $(BUILD_DIR)/obj/%.o, $(CORE_SRCS))
 CORE_BIN = $(BUILD_DIR)/imp
 
-MODULE_NAMES = interface security prioritizer memory
+MODULE_NAMES = memory #interface security prioritizer
 MODULE_BINS = $(patsubst %, $(BUILD_DIR)/modules/imp_%.so, $(MODULE_NAMES))
 
 .PHONY: all clean
 
-all: $(CORE_BIN) #$(MODULE_BINS)
+all: $(CORE_BIN) $(MODULE_BINS)
 
 $(BUILD_DIR)/obj/%.o: $(SRC_DIR)/%.c
 	@mkdir -p $(dir $@)
