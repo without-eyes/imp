@@ -6,6 +6,7 @@
 #include <unistd.h>
 #include <time.h>
 #include <sys/time.h>
+#include <pthread.h>
 
 #define TIME_STR_SIZE 32
 
@@ -13,13 +14,15 @@ typedef struct {
     FILE* fd;
     bool isInitialized;
     log_level_t level;
+    pthread_mutex_t lock;
 } LoggerConfig;
 
 static LoggerConfig* log_get_config(void) {
     static LoggerConfig config = {
         .fd = NULL,
         .isInitialized = false,
-        .level = LOG_LEVEL_UNINITIALIZED
+        .level = LOG_LEVEL_UNINITIALIZED,
+        .lock = PTHREAD_MUTEX_INITIALIZER
     };
     return &config;
 }
@@ -27,12 +30,16 @@ static LoggerConfig* log_get_config(void) {
 int log_init(const char* logFilePath, log_level_t level) {
     LoggerConfig* config = log_get_config();
 
+    pthread_mutex_lock(&config->lock);
+
     if (config->isInitialized) {
+        pthread_mutex_unlock(&config->lock);
         return 0;
     }
 
     config->fd = fopen(logFilePath, "a");
     if (config->fd == NULL) {
+        pthread_mutex_unlock(&config->lock);
         return -1;
     }
 
@@ -41,11 +48,15 @@ int log_init(const char* logFilePath, log_level_t level) {
 
     setvbuf(config->fd, NULL, _IOLBF, 0);
 
+    pthread_mutex_unlock(&config->lock);
     return 0;
 }
 
 int log_deinit(void) {
     LoggerConfig* config = log_get_config();
+    
+    pthread_mutex_lock(&config->lock);
+
     config->isInitialized = false;
     config->level = LOG_LEVEL_UNINITIALIZED;
 
@@ -54,6 +65,7 @@ int log_deinit(void) {
         config->fd = NULL;
     }
 
+    pthread_mutex_unlock(&config->lock);
     return 0;
 }
 
@@ -84,7 +96,10 @@ static void log_get_curr_time(char* buffer, size_t size) {
 
 int log_write(log_level_t level, const char* moduleName, const char* file, int line, const char* format, ...) {
     LoggerConfig* config = log_get_config();
+    pthread_mutex_lock(&config->lock);
+
     if (config->isInitialized == false || config->level < level || config->fd == NULL) {
+        pthread_mutex_unlock(&config->lock); 
         return 0;
     }
 
@@ -95,6 +110,7 @@ int log_write(log_level_t level, const char* moduleName, const char* file, int l
     int prefix_len = snprintf(buffer, LOG_BUFF_SIZE, "[%s][PID:%d][%s][%s:%d][%s] ", time_str, getpid(), moduleName, file, line, log_level_to_string(level));
 
     if (prefix_len < 0 || prefix_len >= LOG_BUFF_SIZE) {
+        pthread_mutex_unlock(&config->lock);
         return -1;
     }
 
@@ -119,5 +135,6 @@ int log_write(log_level_t level, const char* moduleName, const char* file, int l
 
     fputs(buffer, config->fd);
     
+    pthread_mutex_unlock(&config->lock);
     return 0;
 }
