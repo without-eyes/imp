@@ -22,6 +22,8 @@
 #include "utils/ipc.h"
 #include "utils/cJSON.h"
 
+#define CONFIG_PATH "/etc/imp/imp.json"
+#define CONFIG_MAX_SIZE 2048
 #define MAX_MODULES 16
 #define MAX_CRASHES 3
 #define RESTART_DELAY_SEC 5
