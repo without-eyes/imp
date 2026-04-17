@@ -2,6 +2,7 @@
 
 #include "core/imp_module.h"
 #include "utils/logger.h"
+#include "utils/ipc.h"
 #include "utils/cJSON.h"
 
 #include <stdio.h>
@@ -53,10 +54,15 @@ static void check_critical_files() {
     for (int i = 0; i < file_count; i++) {
         if (stat(critical_files[i], &st) == 0) {
             if (st.st_mode & S_IROTH) {
+                char ipc_msg[512];
                 if (strstr(critical_files[i], "shadow") != NULL || strstr(critical_files[i], "sudoers") != NULL) {
                     LOG_CRITICAL("Security", "VULNERABILITY: Critical file is world-readable: %s", critical_files[i]);
+                    snprintf(ipc_msg, sizeof(ipc_msg), "VULNERABILITY: Critical file is world-readable: %s", critical_files[i]);
+                    ipc_send_message("Security", "CRITICAL", ipc_msg);
                 } else {
                     LOG_WARN("Security", "Critical file is world-readable: %s", critical_files[i]);
+                    snprintf(ipc_msg, sizeof(ipc_msg), "WARNING: Critical file is world-readable: %s", critical_files[i]);
+                    ipc_send_message("Security", "WARNING", ipc_msg);
                 }
             }
         } else {
@@ -103,8 +109,11 @@ static void check_network_tcp() {
                 ip[2] = (rem_ip >> 16) & 0xFF;
                 ip[3] = (rem_ip >> 24) & 0xFF;
 
-                LOG_NOTICE("Security", "Active SSH connection detected from IP: %d.%d.%d.%d", 
-                           ip[0], ip[1], ip[2], ip[3]);
+                LOG_NOTICE("Security", "Active SSH connection detected from IP: %d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3]);
+                
+                char ipc_msg[256];
+                snprintf(ipc_msg, sizeof(ipc_msg), "Active SSH connection detected from IP: %d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3]);
+                ipc_send_message("Security", "NOTICE", ipc_msg);
             }
         }
     }

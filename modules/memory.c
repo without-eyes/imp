@@ -2,6 +2,7 @@
 
 #include "core/imp_module.h"
 #include "utils/logger.h"
+#include "utils/ipc.h"
 #include "utils/cJSON.h"
 
 #include <stdio.h>
@@ -88,6 +89,10 @@ static void check_disk_space(const char* path) {
         if (used_percent >= critical_disk_usage_percent) {
             LOG_CRITICAL("Memory", "DISK ALMOST FULL on [%s]! Usage: %.1f%% (Limit: %d%%)", 
                          path, used_percent, critical_disk_usage_percent);
+            
+            char ipc_msg[256];
+            snprintf(ipc_msg, sizeof(ipc_msg), "DISK ALMOST FULL on [%s]! Usage: %.1f%%", path, used_percent);
+            ipc_send_message("Memory", "CRITICAL", ipc_msg);
         } else {
             LOG_DEBUG("Memory", "Disk usage on [%s]: %.1f%%", path, used_percent);
         }

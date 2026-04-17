@@ -2,6 +2,7 @@
 
 #include "core/imp_module.h"
 #include "utils/logger.h"
+#include "utils/ipc.h"
 #include "utils/cJSON.h"
 
 #include <stdio.h>
@@ -78,6 +79,10 @@ static void handle_heavy_process(pid_t pid, const char* name, long rss_kb) {
         LOG_WARN("Prioritizer", "Process [%s] (PID: %d) uses too much RAM: %ld MB. Lowering priority.", 
                     name, pid, rss_kb / 1024);
  
+        char ipc_msg[256];
+        snprintf(ipc_msg, sizeof(ipc_msg), "Process [%s] (PID: %d) uses too much RAM: %ld MB", name, pid, rss_kb / 1024);
+        ipc_send_message("Prioritizer", "WARNING", ipc_msg);
+
         setpriority(PRIO_PROCESS, pid, 19);
     }
 }
