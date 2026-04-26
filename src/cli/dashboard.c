@@ -11,7 +11,7 @@
 #include <sys/select.h>
 
 #define DASHBOARD_SOCKET_PATH "/tmp/imp_dashboard.sock"
-#define MAX_LOGS 50
+#define MAX_LOGS 500
 #define MAX_LOGS_PER_MODULE 5
 
 volatile sig_atomic_t dashboard_active = 1;
