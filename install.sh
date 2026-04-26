@@ -20,13 +20,8 @@ echo "[3/4] Installing files..."
 sudo cp build/imp /usr/bin/imp
 sudo chmod 755 /usr/bin/imp
 
-if [ ! -f /etc/imp/imp.json ]; then
-    sudo cp config/default.conf /etc/imp/imp.json
-    sudo chmod 644 /etc/imp/imp.json
-    echo "  -> Default config copied to /etc/imp/imp.json"
-else
-    echo "  -> Config already exists in /etc/imp/imp.json, skipping overwrite."
-fi
+sudo cp config/default.conf /etc/imp/imp.json
+sudo chmod 644 /etc/imp/imp.json
 
 sudo cp build/modules/*.so /usr/lib/imp/modules/
 sudo chmod 755 /usr/lib/imp/modules/*.so
