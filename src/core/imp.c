@@ -23,7 +23,7 @@
 #include "utils/cJSON.h"
 
 #define CONFIG_PATH "/etc/imp/imp.json"
-#define CONFIG_MAX_SIZE 2048
+#define CONFIG_MAX_SIZE 4096
 #define MAX_MODULES 16
 #define MAX_CRASHES 3
 #define RESTART_DELAY_SEC 5
@@ -31,7 +31,8 @@
 typedef struct {
     pid_t pid;
     char name[64];
-    char soPath[256];
+    char type[16];    // "binary" або "script"
+    char path[256];    // шлях до .so або .py
     char* configString;
     int crashCount;
     bool enabled;
@@ -61,6 +62,34 @@ static int read_config(char* jsonConfig, size_t jsonConfigSize) {
     return 0;
 }
 
+static void load_binary_module(int index) {
+    void* handle = dlopen(registry[index].path, RTLD_NOW);
+    if (handle == NULL) {
+        LOG_ERR("Core", "[%s] Failed to load binary: %s", registry[index].name, dlerror());
+        exit(1);
+    }
+
+    ImpModule* module = (ImpModule*)dlsym(handle, IMP_MODULE_SYM);
+    if (module == NULL) {
+        LOG_ERR("Core", "[%s] Symbol not found", registry[index].name);
+        dlclose(handle);
+        exit(1);
+    }
+
+    LOG_INFO("Core", "Loaded [%s] successfully (v%s)", module->name, module->version);
+
+    if (module->init(registry[index].configString) == 0) {
+        module->run();
+    } else {
+        LOG_ERR("Core", "Initialization [%s] failed!", module->name);
+        exit(1);
+    }
+
+    module->cleanup();
+    dlclose(handle);
+    exit(0);
+}
+
 static void spawn_module(int index, bool isRestart) {
     pid_t pid = fork();
     
@@ -69,7 +98,7 @@ static void spawn_module(int index, bool isRestart) {
         return;
     } 
     
-    if (pid == 0) {
+    if (pid == 0) { // Дочірній процес
         signal(SIGINT, SIG_DFL);
         signal(SIGTERM, SIG_DFL);
 
@@ -77,42 +106,35 @@ static void spawn_module(int index, bool isRestart) {
             sleep(RESTART_DELAY_SEC);
         }
 
-        void* handle = dlopen(registry[index].soPath, RTLD_NOW);
-        if (handle == NULL) {
-            LOG_ERR("Core", "[%s] Failed to load: %s", registry[index].name, dlerror());
+        if (strcmp(registry[index].type, "binary") == 0) {
+            load_binary_module(index);
+        } 
+        else if (strcmp(registry[index].type, "script") == 0) {
+            LOG_INFO("Core", "Executing script module [%s] via python3", registry[index].name);
+            
+            // Запускаємо інтерпретатор Python
+            char *args[] = {"python3", registry[index].path, NULL};
+            execvp("python3", args);
+            
+            // Якщо execvp повернув керування — це помилка
+            LOG_ERR("Core", "Failed to exec python3 for [%s]: %s", registry[index].name, strerror(errno));
             exit(1);
-        }
-
-        ImpModule* module = (ImpModule*)dlsym(handle, IMP_MODULE_SYM);
-        if (module == NULL) {
-            LOG_ERR("Core", "[%s] Symbol not found", registry[index].name);
-            dlclose(handle);
-            exit(1); // TODO: Use EXIT_FAILURE/EXIT_SUCCESS
-        }
-
-        LOG_INFO("Core", "Loaded [%s] successfully (v%s)", module->name, module->version);
-
-        if (module->init(registry[index].configString) == 0) {
-            module->run();
         } else {
-            LOG_ERR("Core", "Initialization [%s] failed!", module->name);
+            LOG_ERR("Core", "Unknown module type [%s] for [%s]", registry[index].type, registry[index].name);
             exit(1);
         }
-
-        module->cleanup();
-        dlclose(handle);
-        exit(0);
     } 
-    else {
+    else { // Батьківський процес
         registry[index].pid = pid;
-        LOG_INFO("Core", "Module [%s] forked with PID: %d", registry[index].name, pid);
+        LOG_INFO("Core", "Module [%s] (%s) started with PID: %d", 
+                 registry[index].name, registry[index].type, pid);
     }
 }
 
 static int parse_and_load_modules(const char* jsonString) {
     cJSON *root = cJSON_Parse(jsonString);
     if (root == NULL) {
-        LOG_ERR("Core", "Failed to parse JSON config: %s!", jsonString);
+        LOG_ERR("Core", "Failed to parse JSON config!");
         return -1;
     }
 
@@ -120,18 +142,24 @@ static int parse_and_load_modules(const char* jsonString) {
     cJSON *moduleItem = NULL;
 
     cJSON_ArrayForEach(moduleItem, modulesArray) {
-        if (moduleCount >= MAX_MODULES) {
-            break;
-        }
+        if (moduleCount >= MAX_MODULES) break;
 
         cJSON *enabled = cJSON_GetObjectItem(moduleItem, "enabled");
-        if (!cJSON_IsTrue(enabled)) {
-            LOG_NOTICE("Core", "Module [%s] is DISABLED. Skipping.", cJSON_GetObjectItem(moduleItem, "name")->valuestring);
+        if (!cJSON_IsTrue(enabled)) continue;
+
+        // Отримуємо базові поля
+        cJSON *name = cJSON_GetObjectItem(moduleItem, "name");
+        cJSON *type = cJSON_GetObjectItem(moduleItem, "type");
+        cJSON *path = cJSON_GetObjectItem(moduleItem, "path");
+
+        if (!name || !type || !path) {
+            LOG_WARN("Core", "Skipping incomplete module definition in config.");
             continue;
         }
 
-        strncpy(registry[moduleCount].name, cJSON_GetObjectItem(moduleItem, "name")->valuestring, 63); // TODO: change magic numbers to macros
-        strncpy(registry[moduleCount].soPath, cJSON_GetObjectItem(moduleItem, "so_path")->valuestring, 255);
+        strncpy(registry[moduleCount].name, name->valuestring, 63);
+        strncpy(registry[moduleCount].type, type->valuestring, 15);
+        strncpy(registry[moduleCount].path, path->valuestring, 255);
         
         cJSON *moduleConfig = cJSON_GetObjectItem(moduleItem, "config");
         registry[moduleCount].configString = cJSON_PrintUnformatted(moduleConfig);
@@ -148,22 +176,16 @@ static int parse_and_load_modules(const char* jsonString) {
 
 static void* ipc_broker_loop(void* arg) {
     (void)arg;
-
     int server_sock = socket(AF_UNIX, SOCK_STREAM, 0);
-    if (server_sock < 0) {
-        LOG_ERR("Broker", "Failed to create IPC socket.");
-        return NULL;
-    }
+    if (server_sock < 0) return NULL;
 
     unlink(IMP_SOCKET_PATH);
-
     struct sockaddr_un addr;
     memset(&addr, 0, sizeof(addr));
     addr.sun_family = AF_UNIX;
     strncpy(addr.sun_path, IMP_SOCKET_PATH, sizeof(addr.sun_path) - 1);
 
     if (bind(server_sock, (struct sockaddr*)&addr, sizeof(addr)) == -1) {
-        LOG_ERR("Broker", "Failed to bind IPC socket.");
         close(server_sock);
         return NULL;
     }
@@ -175,21 +197,14 @@ static void* ipc_broker_loop(void* arg) {
         fd_set readfds;
         FD_ZERO(&readfds);
         FD_SET(server_sock, &readfds);
-
         struct timeval tv = {1, 0};
 
-        int activity = select(server_sock + 1, &readfds, NULL, NULL, &tv);
-        
-        if (activity > 0 && FD_ISSET(server_sock, &readfds)) {
+        if (select(server_sock + 1, &readfds, NULL, NULL, &tv) > 0) {
             int client_sock = accept(server_sock, NULL, NULL);
             if (client_sock >= 0) {
                 char buffer[1024] = {0};
-                ssize_t bytes_read = read(client_sock, buffer, sizeof(buffer) - 1);
-                
-                if (bytes_read > 0) {
-                    buffer[bytes_read] = '\0';
-                    // TODO: Send data to Interface module
-                    LOG_NOTICE("Broker", "Received Event: %s", buffer);
+                if (read(client_sock, buffer, sizeof(buffer) - 1) > 0) {
+                    LOG_NOTICE("Broker", "Event: %s", buffer);
                 }
                 close(client_sock);
             }
@@ -198,13 +213,11 @@ static void* ipc_broker_loop(void* arg) {
 
     close(server_sock);
     unlink(IMP_SOCKET_PATH);
-    LOG_INFO("Broker", "IPC Message Bus shut down.");
     return NULL;
 }
 
 static void supervisor_loop() {
-    LOG_INFO("Core", "Entering Supervisor mode. Monitoring %d modules...", moduleCount);
-
+    LOG_INFO("Core", "Supervisor active. Monitoring %d modules.", moduleCount);
     signal(SIGINT, handle_shutdown);
     signal(SIGTERM, handle_shutdown);
     
@@ -212,26 +225,21 @@ static void supervisor_loop() {
         int status;
         pid_t deadPid = waitpid(-1, &status, 0); 
         
-        if (deadPid == -1 && errno == EINTR) {
-            continue; 
-        }
-
         if (deadPid <= 0) {
-            continue;
+            if (errno == EINTR) continue;
+            break;
         }
 
         for (int i = 0; i < moduleCount; i++) {
             if (registry[i].enabled && registry[i].pid == deadPid) {
                 registry[i].crashCount++;
-                
-                LOG_WARN("Core", "Module [%s] died (PID: %d). Crash count: %d/%d", 
-                            registry[i].name, deadPid, registry[i].crashCount, MAX_CRASHES);
+                LOG_WARN("Core", "Module [%s] died. Crashes: %d/%d", 
+                         registry[i].name, registry[i].crashCount, MAX_CRASHES);
 
                 if (registry[i].crashCount >= MAX_CRASHES) {
-                    LOG_ERR("Core", "Module [%s] crashed too many times. Permanently disabled.", registry[i].name);
+                    LOG_ERR("Core", "Module [%s] disabled (too many crashes).", registry[i].name);
                     registry[i].enabled = false;
                 } else {
-                    LOG_INFO("Core", "Restarting [%s]...", registry[i].name);
                     spawn_module(i, true);
                 }
                 break;
@@ -241,34 +249,14 @@ static void supervisor_loop() {
 }
 
 void imp_daemonize(void) {
-    pid_t pid;
-
-    pid = fork();
-    if (pid < 0) {
-        exit(EXIT_FAILURE);
-    } else if (pid > 0) {
-        exit(EXIT_SUCCESS);
-    }
-
-    if (setsid() < 0) {
-        exit(EXIT_FAILURE);
-    }
-
+    pid_t pid = fork();
+    if (pid != 0) exit(pid < 0 ? 1 : 0);
+    setsid();
     signal(SIGHUP, SIG_IGN);
-
     pid = fork();
-    if (pid < 0) {
-        exit(EXIT_FAILURE);
-    } else if (pid > 0) {
-        exit(EXIT_SUCCESS); 
-    }
-
+    if (pid != 0) exit(pid < 0 ? 1 : 0);
     umask(0);
-
-    if (chdir("/") < 0) {
-        exit(EXIT_FAILURE);
-    }
-
+    chdir("/");
     int fd = open("/dev/null", O_RDWR);
     if (fd >= 0) {
         dup2(fd, STDIN_FILENO);
@@ -280,43 +268,22 @@ void imp_daemonize(void) {
 
 int imp_run() {
     log_init(LOG_FILE_PATH, LOG_LEVEL_DEBUG);
-
     char jsonString[CONFIG_MAX_SIZE];
-    if (read_config(jsonString, sizeof(jsonString)) != 0) {
-        return -1;
-    }
-
-    if (parse_and_load_modules(jsonString)) {
-        return -1;
-    }
-
-    if (pthread_create(&broker_thread, NULL, ipc_broker_loop, NULL) != 0) {
-        LOG_ERR("Core", "Failed to start IPC Broker thread.");
-        return -1;
-    }
-
+    if (read_config(jsonString, sizeof(jsonString)) != 0) return -1;
+    if (parse_and_load_modules(jsonString)) return -1;
+    pthread_create(&broker_thread, NULL, ipc_broker_loop, NULL);
     supervisor_loop();
-
     return 0;
 }
 
 int imp_cleanup() {
-    LOG_INFO("Core", "Initiating shutdown. Cleaning up...");
-
+    LOG_INFO("Core", "Cleaning up...");
+    daemonActive = 0;
     pthread_join(broker_thread, NULL);
-
     for (int i = 0; i < moduleCount; i++) {
-        if (registry[i].enabled && registry[i].pid > 0) {
-            LOG_DEBUG("Core", "Sending SIGTERM to module [%s] (PID: %d)", registry[i].name, registry[i].pid);
-            kill(registry[i].pid, SIGTERM); 
-        }
-
-        if (registry[i].configString != NULL) {
-            free(registry[i].configString);
-            registry[i].configString = NULL;
-        }
+        if (registry[i].pid > 0) kill(registry[i].pid, SIGTERM);
+        if (registry[i].configString) free(registry[i].configString);
     }
-
     log_deinit();
     return 0;
 }
