@@ -26,6 +26,14 @@
 #define CONFIG_PATH "/etc/imp/imp.json"
 #endif
 
+#ifndef DEFAULT_LOG_FILE
+#define DEFAULT_LOG_FILE "/var/log/imp/imp.log"
+#endif
+
+#ifndef DEFAULT_PID_FILE
+#define DEFAULT_PID_FILE "/var/run/imp.pid"
+#endif
+
 #define CONFIG_MAX_SIZE 2048
 #define MAX_MODULES 16
 #define MAX_CRASHES 3
@@ -45,15 +53,47 @@ static int moduleCount = 0;
 volatile sig_atomic_t daemonActive = 1;
 static pthread_t broker_thread;
 
+static char core_log_file[256] = DEFAULT_LOG_FILE;
+static char core_pid_file[256] = DEFAULT_PID_FILE;
+
 void handle_shutdown(int sig) {
     (void)sig;
     daemonActive = 0; 
 }
 
+static log_level_t parse_core_config(const char* jsonString) {
+    log_level_t level = LOG_LEVEL_INFO;
+    cJSON *root = cJSON_Parse(jsonString);
+    
+    if (root != NULL) {
+        cJSON *lvl = cJSON_GetObjectItem(root, "log_level");
+        if (cJSON_IsString(lvl)) {
+            if (strcmp(lvl->valuestring, "DEBUG") == 0) level = LOG_LEVEL_DEBUG;
+            else if (strcmp(lvl->valuestring, "INFO") == 0) level = LOG_LEVEL_INFO;
+            else if (strcmp(lvl->valuestring, "NOTICE") == 0) level = LOG_LEVEL_NOTICE;
+            else if (strcmp(lvl->valuestring, "WARNING") == 0) level = LOG_LEVEL_WARNING;
+            else if (strcmp(lvl->valuestring, "ERR") == 0) level = LOG_LEVEL_ERROR;
+            else if (strcmp(lvl->valuestring, "CRITICAL") == 0) level = LOG_LEVEL_CRITICAL;
+        }
+
+        cJSON *log_file = cJSON_GetObjectItem(root, "log_file");
+        if (cJSON_IsString(log_file)) {
+            strncpy(core_log_file, log_file->valuestring, sizeof(core_log_file) - 1);
+        }
+
+        cJSON *pid_file = cJSON_GetObjectItem(root, "pid_file");
+        if (cJSON_IsString(pid_file)) {
+            strncpy(core_pid_file, pid_file->valuestring, sizeof(core_pid_file) - 1);
+        }
+
+        cJSON_Delete(root);
+    }
+    return level;
+}
+
 static int read_config(char* jsonConfig, size_t jsonConfigSize) {
     FILE* fd = fopen(CONFIG_PATH, "rb");
     if (fd == NULL) {
-        LOG_ERR("Core", "Could not open config file: %s. Exiting.", CONFIG_PATH);
         return -1;
     }
 
@@ -62,6 +102,20 @@ static int read_config(char* jsonConfig, size_t jsonConfigSize) {
     
     fclose(fd);
     return 0;
+}
+
+static void write_pid_file() {
+    FILE *fp = fopen(core_pid_file, "w");
+    if (fp) {
+        fprintf(fp, "%d\n", getpid());
+        fclose(fp);
+    } else {
+        LOG_WARN("Core", "Could not write PID file to %s", core_pid_file);
+    }
+}
+
+static void remove_pid_file() {
+    unlink(core_pid_file);
 }
 
 static void spawn_module(int index, bool isRestart) {
@@ -90,7 +144,7 @@ static void spawn_module(int index, bool isRestart) {
         if (module == NULL) {
             LOG_ERR("Core", "[%s] Symbol not found", registry[index].name);
             dlclose(handle);
-            exit(1); // TODO: Use EXIT_FAILURE/EXIT_SUCCESS
+            exit(1);
         }
 
         LOG_INFO("Core", "Loaded [%s] successfully (v%s)", module->name, module->version);
@@ -133,7 +187,7 @@ static int parse_and_load_modules(const char* jsonString) {
             continue;
         }
 
-        strncpy(registry[moduleCount].name, cJSON_GetObjectItem(moduleItem, "name")->valuestring, 63); // TODO: change magic numbers to macros
+        strncpy(registry[moduleCount].name, cJSON_GetObjectItem(moduleItem, "name")->valuestring, 63);
         strncpy(registry[moduleCount].soPath, cJSON_GetObjectItem(moduleItem, "so_path")->valuestring, 255);
         
         cJSON *moduleConfig = cJSON_GetObjectItem(moduleItem, "config");
@@ -191,7 +245,6 @@ static void* ipc_broker_loop(void* arg) {
                 
                 if (bytes_read > 0) {
                     buffer[bytes_read] = '\0';
-                    // TODO: Send data to Interface module
                     LOG_NOTICE("Broker", "Received Event: %s", buffer);
                 }
                 close(client_sock);
@@ -247,30 +300,20 @@ void imp_daemonize(void) {
     pid_t pid;
 
     pid = fork();
-    if (pid < 0) {
-        exit(EXIT_FAILURE);
-    } else if (pid > 0) {
-        exit(EXIT_SUCCESS);
-    }
+    if (pid < 0) exit(EXIT_FAILURE);
+    else if (pid > 0) exit(EXIT_SUCCESS);
 
-    if (setsid() < 0) {
-        exit(EXIT_FAILURE);
-    }
+    if (setsid() < 0) exit(EXIT_FAILURE);
 
     signal(SIGHUP, SIG_IGN);
 
     pid = fork();
-    if (pid < 0) {
-        exit(EXIT_FAILURE);
-    } else if (pid > 0) {
-        exit(EXIT_SUCCESS); 
-    }
+    if (pid < 0) exit(EXIT_FAILURE);
+    else if (pid > 0) exit(EXIT_SUCCESS); 
 
     umask(0);
 
-    if (chdir("/") < 0) {
-        exit(EXIT_FAILURE);
-    }
+    if (chdir("/") < 0) exit(EXIT_FAILURE);
 
     int fd = open("/dev/null", O_RDWR);
     if (fd >= 0) {
@@ -282,12 +325,18 @@ void imp_daemonize(void) {
 }
 
 int imp_run() {
-    log_init(LOG_FILE_PATH, LOG_LEVEL_DEBUG);
-
     char jsonString[CONFIG_MAX_SIZE];
+    
     if (read_config(jsonString, sizeof(jsonString)) != 0) {
+        log_init(core_log_file, LOG_LEVEL_INFO);
+        LOG_ERR("Core", "Could not open config file: %s. Exiting.", CONFIG_PATH);
         return -1;
     }
+
+    log_level_t current_level = parse_core_config(jsonString);
+    log_init(core_log_file, current_level);
+
+    write_pid_file();
 
     if (parse_and_load_modules(jsonString)) {
         return -1;
@@ -320,6 +369,7 @@ int imp_cleanup() {
         }
     }
 
+    remove_pid_file();
     log_deinit();
     return 0;
 }

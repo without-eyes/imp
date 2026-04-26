@@ -9,6 +9,8 @@
 #include <fstream>
 
 #define CONFIG_PATH "/tmp/test_imp.json" 
+#define DEFAULT_LOG_FILE "/tmp/test_imp.log"
+#define DEFAULT_PID_FILE "/tmp/test_imp.pid"
 
 extern "C" {
     #include "../../src/core/imp.c"
@@ -21,9 +23,14 @@ protected:
         daemonActive = 1;
         memset(registry, 0, sizeof(registry));
         
+        strcpy(core_log_file, DEFAULT_LOG_FILE);
+        strcpy(core_pid_file, DEFAULT_PID_FILE);
+        
         std::ofstream outfile(CONFIG_PATH);
         outfile << "{\"modules\": []}";
         outfile.close();
+        
+        std::remove(DEFAULT_PID_FILE);
     }
 
     void TearDown() override {
@@ -34,8 +41,45 @@ protected:
             }
         }
         std::remove(CONFIG_PATH);
+        std::remove(DEFAULT_PID_FILE);
     }
 };
+
+TEST_F(ImpCoreTest, ParsesCoreConfigCorrectly) {
+    const char* json = R"({
+        "log_level": "WARNING",
+        "log_file": "/tmp/custom.log",
+        "pid_file": "/tmp/custom.pid"
+    })";
+
+    int level = parse_core_config(json);
+    
+    EXPECT_EQ(level, LOG_LEVEL_WARNING);
+    EXPECT_STREQ(core_log_file, "/tmp/custom.log");
+    EXPECT_STREQ(core_pid_file, "/tmp/custom.pid");
+    
+    EXPECT_EQ(parse_core_config("{}"), LOG_LEVEL_INFO); 
+    EXPECT_EQ(parse_core_config("{invalid json}"), LOG_LEVEL_INFO); 
+}
+
+TEST_F(ImpCoreTest, WritesAndRemovesPidFile) {
+    strcpy(core_pid_file, "/tmp/test_imp.pid");
+    
+    write_pid_file();
+    
+    std::ifstream pid_stream("/tmp/test_imp.pid");
+    ASSERT_TRUE(pid_stream.good());
+    
+    int written_pid;
+    pid_stream >> written_pid;
+    pid_stream.close();
+    
+    EXPECT_EQ(written_pid, getpid());
+    
+    remove_pid_file();
+    std::ifstream pid_stream_after("/tmp/test_imp.pid");
+    EXPECT_FALSE(pid_stream_after.good());
+}
 
 TEST_F(ImpCoreTest, HandleShutdownSetsFlag) {
     EXPECT_EQ(daemonActive, 1);
