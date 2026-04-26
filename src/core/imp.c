@@ -22,7 +22,10 @@
 #include "utils/ipc.h"
 #include "utils/cJSON.h"
 
+#ifndef CONFIG_PATH
 #define CONFIG_PATH "/etc/imp/imp.json"
+#endif
+
 #define CONFIG_MAX_SIZE 2048
 #define MAX_MODULES 16
 #define MAX_CRASHES 3

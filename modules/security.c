@@ -1,4 +1,6 @@
+#ifndef _GNU_SOURCE
 #define _GNU_SOURCE
+#endif
 
 #include "core/imp_module.h"
 #include "utils/logger.h"
@@ -11,8 +13,11 @@
 #include <unistd.h>
 #include <sys/stat.h>
 
-#define MAX_FILES 10
+#ifndef TCP_FILE
 #define TCP_FILE "/proc/net/tcp"
+#endif
+
+#define MAX_FILES 10
 
 static char critical_files[MAX_FILES][256];
 static int file_count = 0;

@@ -8,6 +8,7 @@
 #include <sys/time.h>
 #include <pthread.h>
 
+#define LOG_BUFF_SIZE 1024
 #define TIME_STR_SIZE 32
 
 typedef struct {

@@ -1,8 +1,9 @@
 #ifndef LOGGER_H
 #define LOGGER_H
 
+#ifndef LOG_FILE_PATH
 #define LOG_FILE_PATH "/var/log/imp/imp.log"
-#define LOG_BUFF_SIZE 1024
+#endif
 
 #define LOG_CRITICAL(moduleName, format, ...) log_write(LOG_LEVEL_CRITICAL, moduleName, __FILE__, __LINE__, format, ##__VA_ARGS__)
 #define LOG_ERR(moduleName, format, ...) log_write(LOG_LEVEL_ERROR, moduleName, __FILE__, __LINE__, format, ##__VA_ARGS__)

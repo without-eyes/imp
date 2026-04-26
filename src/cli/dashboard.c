@@ -167,9 +167,9 @@ static void load_initial_logs() {
 static void parse_log_line(const char* raw_line, ParsedLog* parsed) {
     parsed->is_valid = 0;
     if (strncmp(raw_line, "[LIVE IPC]", 10) == 0) {
-        char* src = strstr(raw_line, "\"source\":\"");
-        char* lvl = strstr(raw_line, "\"level\":\"");
-        char* msg = strstr(raw_line, "\"message\":\"");
+        const char* src = strstr(raw_line, "\"source\":\"");
+        const char* lvl = strstr(raw_line, "\"level\":\"");
+        const char* msg = strstr(raw_line, "\"message\":\"");
         if (src && lvl && msg) {
             sscanf(src + 10, "%31[^\"]", parsed->module);
             sscanf(lvl + 9, "%15[^\"]", parsed->level);
