@@ -17,7 +17,7 @@ CORE_SRCS = $(shell find $(SRC_DIR) -type f -name '*.c')
 CORE_OBJS = $(patsubst $(SRC_DIR)/%.c, $(BUILD_DIR)/obj/%.o, $(CORE_SRCS))
 CORE_BIN = $(BUILD_DIR)/imp
 
-MODULE_NAMES = memory security prioritizer
+MODULE_NAMES = memory security prioritizer template
 MODULE_BINS = $(patsubst %, $(BUILD_DIR)/modules/imp_%.so, $(MODULE_NAMES))
 
 TEST_SRCS = $(shell find $(TEST_DIR) -type f -name '*.cpp')
