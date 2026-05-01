@@ -30,13 +30,14 @@ echo -e "\n${GREEN}[4/5] Installing files...${NC}"
 sudo cp build/imp /usr/bin/imp
 sudo chmod 755 /usr/bin/imp
 
-if [ ! -f /etc/imp/imp.json ]; then
-    sudo cp config/default.conf /etc/imp/imp.json
-    sudo chmod 644 /etc/imp/imp.json
-    echo "  -> Default config installed."
-else
-    echo "  -> Config already exists. Skipping to preserve user settings."
+if [ -f /etc/imp/imp.json ]; then
+    echo -e "  ${YELLOW}-> Backing up existing config to imp_copy.json${NC}"
+    sudo cp /etc/imp/imp.json /etc/imp/imp_copy.json
 fi
+
+sudo cp config/default.conf /etc/imp/imp.json
+sudo chmod 644 /etc/imp/imp.json
+
 sudo cp build/modules/*.so /usr/lib/imp/modules/
 sudo chmod 755 /usr/lib/imp/modules/*.so
 
