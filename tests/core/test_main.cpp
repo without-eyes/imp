@@ -111,10 +111,10 @@ TEST_F(MainTest, InteractiveFlagTriggersUI) {
 TEST_F(MainTest, PreventsRunningBothModes) {
     char* argv[] = {(char*)"imp", (char*)"-d", (char*)"-i", nullptr};
     
-    testing::internal::CaptureStdout();
+    testing::internal::CaptureStderr();
     int res = imp_main(3, argv);
-    std::string output = testing::internal::GetCapturedStdout();
-    
+    std::string output = testing::internal::GetCapturedStderr();
+
     EXPECT_EQ(res, 1);
     EXPECT_NE(output.find("Cannot run both"), std::string::npos);
 

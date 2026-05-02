@@ -5,10 +5,15 @@
 #include "core/imp.h"
 #include "cli/dashboard.h"
 
+// Project Metadata
 #define IMP_VERSION "v1.0.0"
+#define AUTHOR_NAME "without eyes"
+
+// Command Line Configuration
+#define SHORT_OPTIONS "dihv"
 
 static void print_help() {
-    printf("I.M.P. %s by without eyes\n\n", IMP_VERSION);
+    printf("I.M.P. %s by %s\n\n", IMP_VERSION, AUTHOR_NAME);
     printf("Usage: imp [OPTIONS]\n\n");
     printf("Options:\n");
     printf("  -d, --daemon        Start daemon mode\n");
@@ -20,7 +25,7 @@ static void print_help() {
 int main(int argc, char *argv[]) {
     if (argc == 1) {
         print_help();
-        return 0;
+        return EXIT_SUCCESS;
     }
 
     bool run_daemon = false;
@@ -35,7 +40,7 @@ int main(int argc, char *argv[]) {
         {0, 0, 0, 0}
     };
 
-    while ((opt = getopt_long(argc, argv, "dihv", long_options, NULL)) != -1) {
+    while ((opt = getopt_long(argc, argv, SHORT_OPTIONS, long_options, NULL)) != -1) {
         switch (opt) {
             case 'd':
                 run_daemon = true;
@@ -47,18 +52,18 @@ int main(int argc, char *argv[]) {
             
             case 'v':
                 printf("I.M.P. %s\n", IMP_VERSION);
-                return 0;
+                return EXIT_SUCCESS;
             
             case 'h':
             default:
                 print_help();
-                return (opt == 'h') ? 0 : 1;
+                return (opt == 'h') ? EXIT_SUCCESS : EXIT_FAILURE;
         }
     }
 
     if (run_daemon && run_ui) {
-        printf("Error: Cannot run both daemon (-d) and interactive (-i) mode in the same process.\n");
-        return 1;
+        fprintf(stderr, "Error: Cannot run both daemon (-d) and interactive (-i) mode in the same process.\n");
+        return EXIT_FAILURE;
     }
 
     if (run_daemon) {
@@ -69,5 +74,5 @@ int main(int argc, char *argv[]) {
         run_interactive_dashboard();
     }
 
-    return 0;
+    return EXIT_SUCCESS;
 }

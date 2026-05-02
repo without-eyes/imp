@@ -8,12 +8,17 @@
 #include <sys/time.h>
 #include <pthread.h>
 
+// Internal limits
 #define LOG_BUFF_SIZE 1024
 #define TIME_STR_SIZE 32
 
+// Format constants
+#define MILLISECS_PER_SEC 1000
+#define SUFFIX_RESERVE_LEN 2 // Space reserved for '\n' and '\0'
+
 typedef struct {
     FILE* fd;
-    bool isInitialized;
+    bool is_initialized;
     log_level_t level;
     pthread_mutex_t lock;
 } LoggerConfig;
@@ -21,30 +26,30 @@ typedef struct {
 static LoggerConfig* log_get_config(void) {
     static LoggerConfig config = {
         .fd = NULL,
-        .isInitialized = false,
+        .is_initialized = false,
         .level = LOG_LEVEL_UNINITIALIZED,
         .lock = PTHREAD_MUTEX_INITIALIZER
     };
     return &config;
 }
 
-int log_init(const char* logFilePath, log_level_t level) {
+int log_init(const char* log_file_path, log_level_t level) {
     LoggerConfig* config = log_get_config();
 
     pthread_mutex_lock(&config->lock);
 
-    if (config->isInitialized) {
+    if (config->is_initialized) {
         pthread_mutex_unlock(&config->lock);
         return 0;
     }
 
-    config->fd = fopen(logFilePath, "a");
+    config->fd = fopen(log_file_path, "a");
     if (config->fd == NULL) {
         pthread_mutex_unlock(&config->lock);
         return -1;
     }
 
-    config->isInitialized = true;
+    config->is_initialized = true;
     config->level = level;
 
     setvbuf(config->fd, NULL, _IOLBF, 0);
@@ -58,7 +63,7 @@ int log_deinit(void) {
     
     pthread_mutex_lock(&config->lock);
 
-    config->isInitialized = false;
+    config->is_initialized = false;
     config->level = LOG_LEVEL_UNINITIALIZED;
 
     if (config->fd != NULL) {
@@ -92,14 +97,14 @@ static void log_get_curr_time(char* buffer, size_t size) {
     char time_str[TIME_STR_SIZE];
     strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M:%S", &sTm);
 
-    snprintf(buffer, size, "%s.%03ld", time_str, tv.tv_usec / 1000);
+    snprintf(buffer, size, "%s.%03ld", time_str, tv.tv_usec / MILLISECS_PER_SEC);
 }
 
-int log_write(log_level_t level, const char* moduleName, const char* file, int line, const char* format, ...) {
+int log_write(log_level_t level, const char* module_name, const char* file, int line, const char* format, ...) {
     LoggerConfig* config = log_get_config();
     pthread_mutex_lock(&config->lock);
 
-    if (config->isInitialized == false || config->level < level || config->fd == NULL) {
+    if (config->is_initialized == false || config->level < level || config->fd == NULL) {
         pthread_mutex_unlock(&config->lock); 
         return 0;
     }
@@ -108,7 +113,8 @@ int log_write(log_level_t level, const char* moduleName, const char* file, int l
     char time_str[TIME_STR_SIZE];
     log_get_curr_time(time_str, sizeof(time_str));
 
-    int prefix_len = snprintf(buffer, LOG_BUFF_SIZE, "[%s][PID:%d][%s][%s:%d][%s] ", time_str, getpid(), moduleName, file, line, log_level_to_string(level));
+    int prefix_len = snprintf(buffer, LOG_BUFF_SIZE, "[%s][PID:%d][%s][%s:%d][%s] ", 
+                              time_str, getpid(), module_name, file, line, log_level_to_string(level));
 
     if (prefix_len < 0 || prefix_len >= LOG_BUFF_SIZE) {
         pthread_mutex_unlock(&config->lock);
@@ -118,17 +124,18 @@ int log_write(log_level_t level, const char* moduleName, const char* file, int l
     va_list args;
     va_start(args, format);
     
-    size_t msg_space = LOG_BUFF_SIZE - prefix_len - 2;
+    size_t msg_space = LOG_BUFF_SIZE - prefix_len - SUFFIX_RESERVE_LEN;
     int msg_len = vsnprintf(buffer + prefix_len, msg_space, format, args);
     
     va_end(args);
+    
     if (msg_len < 0) {
         msg_len = 0;
     }
 
     int total_len = prefix_len + msg_len;
-    if (total_len > LOG_BUFF_SIZE - 2) {
-        total_len = LOG_BUFF_SIZE - 2;
+    if (total_len > LOG_BUFF_SIZE - SUFFIX_RESERVE_LEN) {
+        total_len = LOG_BUFF_SIZE - SUFFIX_RESERVE_LEN;
     }
     
     buffer[total_len] = '\n';

@@ -7,7 +7,7 @@ typedef struct {
     const char* name;
     const char* version;
 
-    int  (*init)(const char* jsonConfig); 
+    int  (*init)(const char* json_config); 
     void (*run)(void);
     void (*cleanup)(void);
 } ImpModule;

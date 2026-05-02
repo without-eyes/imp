@@ -34,15 +34,23 @@
 #define DEFAULT_PID_FILE "/var/run/imp.pid"
 #endif
 
+// Internal limits and configuration
 #define CONFIG_MAX_SIZE 2048
 #define MAX_MODULES 16
 #define MAX_CRASHES 3
 #define RESTART_DELAY_SEC 5
+#define MAX_PATH_LEN 256
+#define MAX_MODULE_NAME_LEN 64
+#define MAX_MODULE_SO_PATH_LEN 256
+
+// IPC Configuration
+#define IPC_BACKLOG 10
+#define IPC_SELECT_TIMEOUT_SEC 1
 
 typedef struct {
     pid_t pid;
-    char name[64];
-    char soPath[256];
+    char name[MAX_MODULE_NAME_LEN];
+    char soPath[MAX_MODULE_SO_PATH_LEN];
     char* configString;
     int crashCount;
     bool enabled;
@@ -53,8 +61,8 @@ static int moduleCount = 0;
 volatile sig_atomic_t daemonActive = 1;
 static pthread_t broker_thread;
 
-static char core_log_file[256] = DEFAULT_LOG_FILE;
-static char core_pid_file[256] = DEFAULT_PID_FILE;
+static char core_log_file[MAX_PATH_LEN] = DEFAULT_LOG_FILE;
+static char core_pid_file[MAX_PATH_LEN] = DEFAULT_PID_FILE;
 
 void handle_shutdown(int sig) {
     (void)sig;
@@ -68,12 +76,19 @@ static log_level_t parse_core_config(const char* jsonString) {
     if (root != NULL) {
         cJSON *lvl = cJSON_GetObjectItem(root, "log_level");
         if (cJSON_IsString(lvl)) {
-            if (strcmp(lvl->valuestring, "DEBUG") == 0) level = LOG_LEVEL_DEBUG;
-            else if (strcmp(lvl->valuestring, "INFO") == 0) level = LOG_LEVEL_INFO;
-            else if (strcmp(lvl->valuestring, "NOTICE") == 0) level = LOG_LEVEL_NOTICE;
-            else if (strcmp(lvl->valuestring, "WARNING") == 0) level = LOG_LEVEL_WARNING;
-            else if (strcmp(lvl->valuestring, "ERR") == 0) level = LOG_LEVEL_ERROR;
-            else if (strcmp(lvl->valuestring, "CRITICAL") == 0) level = LOG_LEVEL_CRITICAL;
+            if (strcmp(lvl->valuestring, "DEBUG") == 0) {
+                level = LOG_LEVEL_DEBUG;
+            } else if (strcmp(lvl->valuestring, "INFO") == 0) {
+                level = LOG_LEVEL_INFO;
+            } else if (strcmp(lvl->valuestring, "NOTICE") == 0) {
+                level = LOG_LEVEL_NOTICE;
+            } else if (strcmp(lvl->valuestring, "WARNING") == 0) {
+                level = LOG_LEVEL_WARNING;
+            } else if (strcmp(lvl->valuestring, "ERR") == 0) {
+                level = LOG_LEVEL_ERROR;
+            } else if (strcmp(lvl->valuestring, "CRITICAL") == 0) {
+                level = LOG_LEVEL_CRITICAL;
+            }
         }
 
         cJSON *log_file = cJSON_GetObjectItem(root, "log_file");
@@ -137,14 +152,14 @@ static void spawn_module(int index, bool isRestart) {
         void* handle = dlopen(registry[index].soPath, RTLD_NOW);
         if (handle == NULL) {
             LOG_ERR("Core", "[%s] Failed to load: %s", registry[index].name, dlerror());
-            exit(1);
+            exit(EXIT_FAILURE);
         }
 
         ImpModule* module = (ImpModule*)dlsym(handle, IMP_MODULE_SYM);
         if (module == NULL) {
             LOG_ERR("Core", "[%s] Symbol not found", registry[index].name);
             dlclose(handle);
-            exit(1);
+            exit(EXIT_FAILURE);
         }
 
         LOG_INFO("Core", "Loaded [%s] successfully (v%s)", module->name, module->version);
@@ -153,12 +168,12 @@ static void spawn_module(int index, bool isRestart) {
             module->run();
         } else {
             LOG_ERR("Core", "Initialization [%s] failed!", module->name);
-            exit(1);
+            exit(EXIT_FAILURE);
         }
 
         module->cleanup();
         dlclose(handle);
-        exit(0);
+        exit(EXIT_SUCCESS);
     } 
     else {
         registry[index].pid = pid;
@@ -187,8 +202,8 @@ static int parse_and_load_modules(const char* jsonString) {
             continue;
         }
 
-        strncpy(registry[moduleCount].name, cJSON_GetObjectItem(moduleItem, "name")->valuestring, 63);
-        strncpy(registry[moduleCount].soPath, cJSON_GetObjectItem(moduleItem, "so_path")->valuestring, 255);
+        strncpy(registry[moduleCount].name, cJSON_GetObjectItem(moduleItem, "name")->valuestring, MAX_MODULE_NAME_LEN - 1);
+        strncpy(registry[moduleCount].soPath, cJSON_GetObjectItem(moduleItem, "so_path")->valuestring, MAX_MODULE_SO_PATH_LEN - 1);
         
         cJSON *moduleConfig = cJSON_GetObjectItem(moduleItem, "config");
         registry[moduleCount].configString = cJSON_PrintUnformatted(moduleConfig);
@@ -225,7 +240,7 @@ static void* ipc_broker_loop(void* arg) {
         return NULL;
     }
     
-    listen(server_sock, 10);
+    listen(server_sock, IPC_BACKLOG);
     LOG_INFO("Broker", "IPC Message Bus active on %s", IMP_SOCKET_PATH);
 
     while (daemonActive) {
@@ -233,14 +248,14 @@ static void* ipc_broker_loop(void* arg) {
         FD_ZERO(&readfds);
         FD_SET(server_sock, &readfds);
 
-        struct timeval tv = {1, 0};
+        struct timeval tv = {IPC_SELECT_TIMEOUT_SEC, 0};
 
         int activity = select(server_sock + 1, &readfds, NULL, NULL, &tv);
         
         if (activity > 0 && FD_ISSET(server_sock, &readfds)) {
             int client_sock = accept(server_sock, NULL, NULL);
             if (client_sock >= 0) {
-                char buffer[1024] = {0};
+                char buffer[MAX_IPC_MESSAGE_LEN] = {0};
                 ssize_t bytes_read = read(client_sock, buffer, sizeof(buffer) - 1);
                 
                 if (bytes_read > 0) {
@@ -300,20 +315,30 @@ void imp_daemonize(void) {
     pid_t pid;
 
     pid = fork();
-    if (pid < 0) exit(EXIT_FAILURE);
-    else if (pid > 0) exit(EXIT_SUCCESS);
+    if (pid < 0) {
+        exit(EXIT_FAILURE);
+    } else if (pid > 0) {
+        exit(EXIT_SUCCESS);
+    }
 
-    if (setsid() < 0) exit(EXIT_FAILURE);
+    if (setsid() < 0) {
+        exit(EXIT_FAILURE);
+    }
 
     signal(SIGHUP, SIG_IGN);
 
     pid = fork();
-    if (pid < 0) exit(EXIT_FAILURE);
-    else if (pid > 0) exit(EXIT_SUCCESS); 
+    if (pid < 0) {
+        exit(EXIT_FAILURE);
+    } else if (pid > 0) {
+        exit(EXIT_SUCCESS);
+    }
 
     umask(0);
 
-    if (chdir("/") < 0) exit(EXIT_FAILURE);
+    if (chdir("/") < 0) {
+        exit(EXIT_FAILURE);
+    }
 
     int fd = open("/dev/null", O_RDWR);
     if (fd >= 0) {

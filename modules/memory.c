@@ -16,15 +16,29 @@
 #include <sys/statvfs.h>
 #include <time.h>
 #include <fnmatch.h>
+#include <stdbool.h>
 
+// Internal limits
 #define MAX_TARGETS 10
+#define MAX_MASK_LEN 64
+#define MAX_FILENAME_LEN 256
+#define MAX_PATH_LEN 512
+#define MAX_FULL_PATH_LEN (MAX_PATH_LEN + MAX_FILENAME_LEN)
+
+// Math and Time constants
+#define PERCENT_MULTIPLIER 100.0
+#define SECONDS_PER_HOUR   3600.0
+#define HOURS_PER_DAY      24.0
+#define SECONDS_PER_DAY    (SECONDS_PER_HOUR * HOURS_PER_DAY)
+
+// Internal defaults
 #define DEFAULT_TARGET_COUNT 0
 #define DEFAULT_CHECK_INTERVAL_SEC_VALUE 3600
 #define DEFAULT_CRITICAL_DISK_USAGE_PERCENT 90
 
 typedef struct {
-    char path[256];
-    char mask[64];
+    char path[MAX_PATH_LEN];
+    char mask[MAX_MASK_LEN];
     int max_age_days;
 } CleanTarget;
 
@@ -82,17 +96,18 @@ static void check_disk_space(const char* path) {
     if (statvfs(path, &vfs) == 0) {
         double total_blocks = vfs.f_blocks;
         double free_blocks = vfs.f_bavail;
+        
         if (total_blocks == 0) {
             return;
         }
 
-        double used_percent = ((total_blocks - free_blocks) / total_blocks) * 100.0;
+        double used_percent = ((total_blocks - free_blocks) / total_blocks) * PERCENT_MULTIPLIER;
 
         if (used_percent >= critical_disk_usage_percent) {
             LOG_CRITICAL("Memory", "DISK ALMOST FULL on [%s]! Usage: %.1f%% (Limit: %d%%)", 
                          path, used_percent, critical_disk_usage_percent);
             
-            char ipc_msg[256];
+            char ipc_msg[MAX_IPC_MESSAGE_LEN];
             snprintf(ipc_msg, sizeof(ipc_msg), "DISK ALMOST FULL on [%s]! Usage: %.1f%%", path, used_percent);
             ipc_send_message("Memory", "CRITICAL", ipc_msg);
         } else {
@@ -112,7 +127,7 @@ static void clean_target(CleanTarget* target) {
 
     struct dirent *entry;
     struct stat file_stat;
-    char filepath[512];
+    char filepath[MAX_FULL_PATH_LEN];
     time_t current_time = time(NULL);
     int deleted_count = 0;
 
@@ -130,10 +145,10 @@ static void clean_target(CleanTarget* target) {
         if (stat(filepath, &file_stat) == 0) {
             if (S_ISREG(file_stat.st_mode)) { 
                 double age_sec = difftime(current_time, file_stat.st_mtime);
-                double max_age_sec = target->max_age_days * 24.0 * 3600.0;
+                double max_age_sec = target->max_age_days * SECONDS_PER_DAY;
 
                 if (age_sec > max_age_sec) {
-                    LOG_DEBUG("Memory", "Deleting old file: %s (Age: %.1f days)", filepath, age_sec / 86400.0);
+                    LOG_DEBUG("Memory", "Deleting old file: %s (Age: %.1f days)", filepath, age_sec / SECONDS_PER_DAY);
                     if (unlink(filepath) == 0) {
                         deleted_count++;
                     } else {
@@ -145,6 +160,7 @@ static void clean_target(CleanTarget* target) {
     }
 
     closedir(dir);
+    
     if (deleted_count > 0) {
         LOG_INFO("Memory", "Cleaned %d old files from [%s] using mask [%s]", 
                  deleted_count, target->path, target->mask);
@@ -154,7 +170,7 @@ static void clean_target(CleanTarget* target) {
 static void memory_run(void) {
     LOG_INFO("Memory", "Process started.");
     
-    while (1) {
+    while (true) {
         for (int i = 0; i < target_count; i++) {
             clean_target(&targets[i]);
         }

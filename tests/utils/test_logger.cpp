@@ -13,7 +13,7 @@ protected:
     void SetUp() override {
         LoggerConfig* config = log_get_config();
         pthread_mutex_lock(&config->lock);
-        config->isInitialized = false;
+        config->is_initialized = false;
         if (config->fd) {
             fclose(config->fd);
             config->fd = NULL;
@@ -32,7 +32,7 @@ protected:
 
 TEST_F(LoggerTest, InitializesSuccessfully) {
     EXPECT_EQ(log_init(test_log_path, LOG_LEVEL_DEBUG), 0);
-    EXPECT_TRUE(log_get_config()->isInitialized);
+    EXPECT_TRUE(log_get_config()->is_initialized);
 }
 
 TEST_F(LoggerTest, WritesToLogFile) {
